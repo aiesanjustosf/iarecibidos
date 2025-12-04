@@ -1,31 +1,42 @@
 # ia_afip_recibidos.py
-# Conversión de AFIP "Recibidos" -> Formato Holistor
+# Conversión de ARCA "Recibidos" -> Formato Holistor
 # AIE San Justo
 
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+from pathlib import Path
+
+# --- Rutas de assets ---
+HERE = Path(__file__).parent
+LOGO = HERE / "logo_aie.png"
+FAVICON = HERE / "favicon-aie.ico"
 
 st.set_page_config(
-    page_title="AFIP Recibidos → Formato Holistor",
-    layout="centered"
+    page_title="ARCA Recibidos → Formato Holistor",
+    page_icon=str(FAVICON) if FAVICON.exists() else None,
+    layout="centered",
 )
 
-st.title("AFIP Recibidos → Formato Holistor")
+# --- Encabezado con logo ---
+if LOGO.exists():
+    st.image(str(LOGO), width=180)
+
+st.title("ARCA Recibidos → Formato Holistor")
 
 st.write(
-    "Subí el Excel original descargado de AFIP (Libro IVA Digital - Compras/Recibidos) "
-    "y descargá un archivo listo para importar en Holistor."
+    "Subí el Excel original descargado de **ARCA** (Libro IVA Digital - Compras/Recibidos) "
+    "y descargá un archivo listo para importar en **Holistor**."
 )
 
 uploaded = st.file_uploader(
-    "Subí el archivo de AFIP (.xlsx)",
+    "Subí el archivo de ARCA (.xlsx)",
     type=["xlsx"]
 )
 
 
 def map_tipo_letra(concepto: str):
-    """Devuelve (Tipo, Letra) según el texto 'Tipo' de AFIP."""
+    """Devuelve (Tipo, Letra) según el texto 'Tipo' de ARCA."""
     concepto = str(concepto).strip()
 
     # Tipo: F / ND / NC
@@ -52,12 +63,12 @@ def map_tipo_letra(concepto: str):
 if uploaded is None:
     st.stop()
 
-# --- LECTURA DEL EXCEL DE AFIP ---
+# --- LECTURA DEL EXCEL DE ARCA ---
 
 # header=1 porque la fila 2 del archivo tiene los encabezados reales
 df = pd.read_excel(uploaded, sheet_name=0, header=1)
 
-# Nombres de columnas según AFIP
+# Nombres de columnas según ARCA
 COL_FECHA = "Fecha"
 COL_TIPO_AFIP = "Tipo"
 COL_PV = "Punto de Venta"
@@ -79,6 +90,7 @@ COL_EXENTAS = "Op. Exentas"
 COL_OTROS = "Otros Tributos"
 
 registros = []
+
 
 def get_num(row, col):
     """Devuelve número limpio (NaN -> 0)."""
@@ -229,4 +241,13 @@ st.download_button(
         "application/vnd.openxmlformats-officedocument."
         "spreadsheetml.sheet"
     ),
+)
+
+# --- Footer ---
+st.markdown(
+    "<br><hr style='opacity:0.3'><div style='text-align:center; "
+    "font-size:12px; color:#6b7280;'>"
+    "© AIE – Herramienta para uso interno | Developer Alfonso Alderete"
+    "</div>",
+    unsafe_allow_html=True,
 )
