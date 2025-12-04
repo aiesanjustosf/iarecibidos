@@ -54,9 +54,10 @@ if uploaded is None:
 
 # --- LECTURA DEL EXCEL DE AFIP ---
 
-df = pd.read_excel(uploaded, sheet_name=0)
+# header=1 porque la fila 2 del archivo tiene los encabezados reales
+df = pd.read_excel(uploaded, sheet_name=0, header=1)
 
-# Nombres de columnas según el archivo de AFIP
+# Nombres de columnas según AFIP
 COL_FECHA = "Fecha"
 COL_TIPO_AFIP = "Tipo"
 COL_PV = "Punto de Venta"
@@ -79,6 +80,14 @@ COL_OTROS = "Otros Tributos"
 
 registros = []
 
+def get_num(row, col):
+    """Devuelve número limpio (NaN -> 0)."""
+    v = row.get(col, 0)
+    if pd.isna(v):
+        return 0.0
+    return float(v)
+
+
 for _, row in df.iterrows():
     concepto = str(row.get(COL_TIPO_AFIP, "")).strip()
     if not concepto:
@@ -89,7 +98,7 @@ for _, row in df.iterrows():
     # Signo según si es Nota de Crédito
     sign = -1 if "Nota de Crédito" in concepto else 1
 
-    # Campos base comunes a todas las filas de este comprobante
+    # Base común
     base = {
         "Fecha Emisión": row.get(COL_FECHA),
         "Fecha Recepción": row.get(COL_FECHA),
@@ -108,8 +117,8 @@ for _, row in df.iterrows():
     }
 
     # Exento / No gravado y otros tributos
-    exng_val = float(row.get(COL_NETO_NG, 0) or 0) + float(row.get(COL_EXENTAS, 0) or 0)
-    otros_val = float(row.get(COL_OTROS, 0) or 0)
+    exng_val = get_num(row, COL_NETO_NG) + get_num(row, COL_EXENTAS)
+    otros_val = get_num(row, COL_OTROS)
 
     filas_comp = []
 
@@ -121,8 +130,8 @@ for _, row in df.iterrows():
     ]
 
     for aliq_txt, col_neto, col_iva in aliquotas:
-        neto = float(row.get(col_neto, 0) or 0)
-        iva = float(row.get(col_iva, 0) or 0)
+        neto = get_num(row, col_neto)
+        iva = get_num(row, col_iva)
 
         # Si no hay importe, no generamos fila para esa alícuota
         if neto == 0 and iva == 0:
@@ -162,8 +171,6 @@ for _, row in df.iterrows():
         )
         registros.append(rec)
 
-# --- ARMAR DATAFRAME DE SALIDA ---
-
 if not registros:
     st.error("No se encontraron comprobantes con importes.")
     st.stop()
@@ -202,12 +209,11 @@ buffer = BytesIO()
 with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
     salida.to_excel(writer, sheet_name="Salida", index=False)
 
-    # Formato de números con miles y 2 decimales
     workbook = writer.book
     worksheet = writer.sheets["Salida"]
     num_format = workbook.add_format({"num_format": "#,##0.00"})
 
-    # Columnas de importes: Neto, IVA, Ex/Ng, Otros, Total
+    # Columnas de importes
     col_idx = {name: i for i, name in enumerate(salida.columns)}
     for nombre in ["Neto", "IVA", "Ex/Ng", "Otros Conceptos", "Total"]:
         j = col_idx[nombre]
