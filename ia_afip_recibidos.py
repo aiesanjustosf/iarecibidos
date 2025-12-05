@@ -1,4 +1,4 @@
-# ia_afip_recibidos.py
+# ia_arca_recibidos.py
 # Conversión de ARCA "Recibidos" -> Formato Holistor
 # AIE San Justo
 
@@ -25,13 +25,14 @@ if LOGO.exists():
 st.title("ARCA Recibidos → Formato Holistor")
 
 st.write(
-    "Subí el Excel original descargado de **ARCA** (Libro IVA Digital - Compras/Recibidos) "
-    "y descargá un archivo listo para importar en **Holistor**."
+    "Subí el Excel original descargado de **ARCA** "
+    "(Libro IVA Digital - Compras/Recibidos) y descargá un archivo "
+    "listo para importar en **Holistor**."
 )
 
 uploaded = st.file_uploader(
     "Subí el archivo de ARCA (.xlsx)",
-    type=["xlsx"]
+    type=["xlsx"],
 )
 
 
@@ -60,7 +61,6 @@ def map_tipo_letra(concepto: str):
         letra = concepto[-1] if concepto else ""
 
     return tipo, letra
-
 
 
 if uploaded is None:
@@ -112,7 +112,9 @@ for _, row in df.iterrows():
     tipo, letra = map_tipo_letra(concepto)
     es_nc = "Nota de Crédito" in concepto
 
-    # Función para aplicar el signo correcto
+    # Función para aplicar el signo correcto:
+    # - NC: siempre negativo
+    # - resto: siempre positivo
     def s(valor: float) -> float:
         if valor == 0:
             return 0.0
@@ -143,14 +145,14 @@ for _, row in df.iterrows():
 
     filas_comp = []
 
-    # Alícuotas consideradas: 10,5% / 21% / 27%
+    # Alícuotas consideradas: 10,5% / 21% / 27% (numéricas)
     aliquotas = [
-        ("10.500", COL_NETO_105, COL_IVA_105),
-        ("21.000", COL_NETO_21, COL_IVA_21),
-        ("27.000", COL_NETO_27, COL_IVA_27),
+        (10.5, COL_NETO_105, COL_IVA_105),
+        (21.0, COL_NETO_21, COL_IVA_21),
+        (27.0, COL_NETO_27, COL_IVA_27),
     ]
 
-    for aliq_txt, col_neto, col_iva in aliquotas:
+    for aliq_val, col_neto, col_iva in aliquotas:
         neto = s(get_num(row, col_neto))
         iva = s(get_num(row, col_iva))
 
@@ -159,7 +161,7 @@ for _, row in df.iterrows():
             continue
 
         rec = base.copy()
-        rec["Alicuota"] = aliq_txt
+        rec["Alicuota"] = aliq_val
         rec["Neto"] = neto
         rec["IVA"] = iva
         rec["Ex/Ng"] = 0.0
@@ -177,7 +179,7 @@ for _, row in df.iterrows():
         #   - si no, pero hay Total (típico comprobante C), mandamos Total a Ex/Ng
         if exng_val != 0 or otros_val != 0 or total_val != 0:
             rec = base.copy()
-            rec["Alicuota"] = "0.000"
+            rec["Alicuota"] = 0.0
             rec["Neto"] = 0.0
             rec["IVA"] = 0.0
 
@@ -241,13 +243,21 @@ with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
 
     workbook = writer.book
     worksheet = writer.sheets["Salida"]
-    num_format = workbook.add_format({"num_format": "#,##0.00"})
+
+    # Formato montos: miles + 2 decimales
+    money_format = workbook.add_format({"num_format": "#,##0.00"})
+
+    col_idx = {name: i for i, name in enumerate(salida.columns)}
 
     # Columnas de importes
-    col_idx = {name: i for i, name in enumerate(salida.columns)}
     for nombre in ["Neto", "IVA", "Ex/Ng", "Otros Conceptos", "Total"]:
         j = col_idx[nombre]
-        worksheet.set_column(j, j, 15, num_format)
+        worksheet.set_column(j, j, 15, money_format)
+
+    # Formato especial para Alicuota: 2 enteros y 3 decimales (ej. 21,000)
+    aliq_format = workbook.add_format({"num_format": "00.000"})
+    j_aliq = col_idx["Alicuota"]
+    worksheet.set_column(j_aliq, j_aliq, 8, aliq_format)
 
 buffer.seek(0)
 
