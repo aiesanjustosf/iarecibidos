@@ -88,7 +88,7 @@ COL_NETO_27 = "Neto Grav. IVA 27%"
 COL_NETO_NG = "Neto No Gravado"
 COL_EXENTAS = "Op. Exentas"
 COL_OTROS = "Otros Tributos"
-COL_TOTAL = "Imp. Total"      # 👈 usamos esto para las Facturas/Recibos C
+COL_TOTAL = "Imp. Total"
 
 registros = []
 
@@ -107,9 +107,13 @@ for _, row in df.iterrows():
         continue
 
     tipo, letra = map_tipo_letra(concepto)
+    es_nc = "Nota de Crédito" in concepto
 
-    # Signo según si es Nota de Crédito
-    sign = -1 if "Nota de Crédito" in concepto else 1
+    # Función para aplicar el signo correcto
+    def s(valor: float) -> float:
+        if valor == 0:
+            return 0.0
+        return -abs(valor) if es_nc else abs(valor)
 
     # Base común
     base = {
@@ -129,10 +133,10 @@ for _, row in df.iterrows():
         "Moneda": row.get(COL_MON),
     }
 
-    # Exento / No gravado y otros tributos
-    exng_val = get_num(row, COL_NETO_NG) + get_num(row, COL_EXENTAS)
-    otros_val = get_num(row, COL_OTROS)
-    total_val = get_num(row, COL_TOTAL)
+    # Exento / No gravado, otros tributos y total, con signo correcto
+    exng_val = s(get_num(row, COL_NETO_NG) + get_num(row, COL_EXENTAS))
+    otros_val = s(get_num(row, COL_OTROS))
+    total_val = s(get_num(row, COL_TOTAL))
 
     filas_comp = []
 
@@ -144,8 +148,8 @@ for _, row in df.iterrows():
     ]
 
     for aliq_txt, col_neto, col_iva in aliquotas:
-        neto = get_num(row, col_neto)
-        iva = get_num(row, col_iva)
+        neto = s(get_num(row, col_neto))
+        iva = s(get_num(row, col_iva))
 
         # Si no hay importe, no generamos fila para esa alícuota
         if neto == 0 and iva == 0:
@@ -153,8 +157,8 @@ for _, row in df.iterrows():
 
         rec = base.copy()
         rec["Alicuota"] = aliq_txt
-        rec["Neto"] = sign * neto
-        rec["IVA"] = sign * iva
+        rec["Neto"] = neto
+        rec["IVA"] = iva
         rec["Ex/Ng"] = 0.0
         rec["Otros Conceptos"] = 0.0
         filas_comp.append(rec)
@@ -162,10 +166,10 @@ for _, row in df.iterrows():
     # Asignar Ex/Ng y Otros en UNA sola fila si hay alícuotas
     if filas_comp:
         if exng_val != 0 or otros_val != 0:
-            filas_comp[0]["Ex/Ng"] = sign * exng_val
-            filas_comp[0]["Otros Conceptos"] = sign * otros_val
+            filas_comp[0]["Ex/Ng"] = exng_val
+            filas_comp[0]["Otros Conceptos"] = otros_val
     else:
-        # 🔹 Caso sin alícuotas:
+        # Caso sin alícuotas:
         #   - si hay Ex/Ng u Otros: usamos esos valores
         #   - si no, pero hay Total (típico comprobante C), mandamos Total a Ex/Ng
         if exng_val != 0 or otros_val != 0 or total_val != 0:
@@ -175,12 +179,11 @@ for _, row in df.iterrows():
             rec["IVA"] = 0.0
 
             if exng_val != 0 or otros_val != 0:
-                rec["Ex/Ng"] = sign * exng_val
-                rec["Otros Conceptos"] = sign * otros_val
+                rec["Ex/Ng"] = exng_val
+                rec["Otros Conceptos"] = otros_val
             else:
-                # 👇 Comprobantes C con solo “Imp. Total”:
-                # todo el total va a No Gravado/Ex
-                rec["Ex/Ng"] = sign * total_val
+                # Comprobantes C con solo “Imp. Total”: todo el total a No Gravado/Ex
+                rec["Ex/Ng"] = total_val
                 rec["Otros Conceptos"] = 0.0
 
             filas_comp.append(rec)
