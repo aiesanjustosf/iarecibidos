@@ -39,11 +39,13 @@ def map_tipo_letra(concepto: str):
     """Devuelve (Tipo, Letra) según el texto 'Tipo' de ARCA."""
     concepto = str(concepto).strip()
 
-    # Tipo: F / ND / NC
+    # Tipo: F / ND / NC / R
     if "Nota de Crédito" in concepto:
         tipo = "NC"
     elif "Nota de Débito" in concepto:
         tipo = "ND"
+    elif "Recibo" in concepto:
+        tipo = "R"
     elif "Factura" in concepto:
         tipo = "F"
     else:
@@ -58,6 +60,7 @@ def map_tipo_letra(concepto: str):
         letra = concepto[-1] if concepto else ""
 
     return tipo, letra
+
 
 
 if uploaded is None:
