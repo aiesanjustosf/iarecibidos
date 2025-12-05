@@ -88,6 +88,7 @@ COL_NETO_27 = "Neto Grav. IVA 27%"
 COL_NETO_NG = "Neto No Gravado"
 COL_EXENTAS = "Op. Exentas"
 COL_OTROS = "Otros Tributos"
+COL_TOTAL = "Imp. Total"      # 👈 usamos esto para las Facturas/Recibos C
 
 registros = []
 
@@ -131,6 +132,7 @@ for _, row in df.iterrows():
     # Exento / No gravado y otros tributos
     exng_val = get_num(row, COL_NETO_NG) + get_num(row, COL_EXENTAS)
     otros_val = get_num(row, COL_OTROS)
+    total_val = get_num(row, COL_TOTAL)
 
     filas_comp = []
 
@@ -157,20 +159,30 @@ for _, row in df.iterrows():
         rec["Otros Conceptos"] = 0.0
         filas_comp.append(rec)
 
-    # Asignar Ex/Ng y Otros en UNA sola fila
+    # Asignar Ex/Ng y Otros en UNA sola fila si hay alícuotas
     if filas_comp:
         if exng_val != 0 or otros_val != 0:
             filas_comp[0]["Ex/Ng"] = sign * exng_val
             filas_comp[0]["Otros Conceptos"] = sign * otros_val
     else:
-        # Sin alícuotas pero con Ex/Ng u Otros: una única fila 0.000
-        if exng_val != 0 or otros_val != 0:
+        # 🔹 Caso sin alícuotas:
+        #   - si hay Ex/Ng u Otros: usamos esos valores
+        #   - si no, pero hay Total (típico comprobante C), mandamos Total a Ex/Ng
+        if exng_val != 0 or otros_val != 0 or total_val != 0:
             rec = base.copy()
             rec["Alicuota"] = "0.000"
             rec["Neto"] = 0.0
             rec["IVA"] = 0.0
-            rec["Ex/Ng"] = sign * exng_val
-            rec["Otros Conceptos"] = sign * otros_val
+
+            if exng_val != 0 or otros_val != 0:
+                rec["Ex/Ng"] = sign * exng_val
+                rec["Otros Conceptos"] = sign * otros_val
+            else:
+                # 👇 Comprobantes C con solo “Imp. Total”:
+                # todo el total va a No Gravado/Ex
+                rec["Ex/Ng"] = sign * total_val
+                rec["Otros Conceptos"] = 0.0
+
             filas_comp.append(rec)
 
     # Calcular total y acumular registros
