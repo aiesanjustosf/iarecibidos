@@ -10,7 +10,7 @@ from pathlib import Path
 # --- Rutas de assets ---
 HERE = Path(__file__).parent
 LOGO = HERE / "logo_aie.png"
-FAVICON = HERE / "favicon-aie.ico"
+FAVICON = HERE / "favicon_aie.ico"
 
 st.set_page_config(
     page_title="ARCA Recibidos → Formato Holistor",
