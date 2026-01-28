@@ -67,7 +67,6 @@ if uploaded is None:
     st.stop()
 
 # --- LECTURA DEL EXCEL DE ARCA ---
-
 # header=1 porque la fila 2 del archivo tiene los encabezados reales
 df = pd.read_excel(uploaded, sheet_name=0, header=1)
 
@@ -79,6 +78,8 @@ COL_NRO_DESDE = "Número Desde"
 COL_NRO_HASTA = "Número Hasta"
 COL_CUIT_EMISOR = "Nro. Doc. Emisor"
 COL_NOM_EMISOR = "Denominación Emisor"
+
+# USD
 COL_TC = "Tipo Cambio"
 COL_MON = "Moneda"
 
@@ -88,20 +89,40 @@ COL_IVA_21 = "IVA 21%"
 COL_NETO_21 = "Neto Grav. IVA 21%"
 COL_IVA_27 = "IVA 27%"
 COL_NETO_27 = "Neto Grav. IVA 27%"
+
+# NUEVO: si hay monto acá, pasarlo como EXENTO en Ex/Ng
+COL_NETO_0 = "Neto Grav. IVA 0%"
+
 COL_NETO_NG = "Neto No Gravado"
 COL_EXENTAS = "Op. Exentas"
 COL_OTROS = "Otros Tributos"
 COL_TOTAL = "Imp. Total"
 
+# Si no existieran por variación de layout, fallback mínimo para no romper
+if COL_TC not in df.columns and "Tipo de Cambio" in df.columns:
+    COL_TC = "Tipo de Cambio"
+if COL_MON not in df.columns and "Moneda" in df.columns:
+    COL_MON = "Moneda"
+if COL_NETO_0 not in df.columns and "Neto Grav. IVA 0 %" in df.columns:
+    COL_NETO_0 = "Neto Grav. IVA 0 %"
+
+# Asegurar columnas presentes
+for c in [COL_TC, COL_MON, COL_NETO_0]:
+    if c not in df.columns:
+        df[c] = 0.0 if c != COL_MON else ""
+
 registros = []
 
 
-def get_num(row, col):
+def get_num_raw(row, col) -> float:
     """Devuelve número limpio (NaN -> 0)."""
     v = row.get(col, 0)
     if pd.isna(v):
         return 0.0
-    return float(v)
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
 
 
 for _, row in df.iterrows():
@@ -112,13 +133,23 @@ for _, row in df.iterrows():
     tipo, letra = map_tipo_letra(concepto)
     es_nc = "Nota de Crédito" in concepto
 
-    # Función para aplicar el signo correcto:
-    # - NC: siempre negativo
-    # - resto: siempre positivo
+    moneda = str(row.get(COL_MON, "") or "").strip().upper()
+    tc = get_num_raw(row, COL_TC)
+
+    # Signo correcto:
+    # - NC: negativo
+    # - resto: positivo
     def s(valor: float) -> float:
         if valor == 0:
             return 0.0
         return -abs(valor) if es_nc else abs(valor)
+
+    # Monto con conversión USD -> ARS (si Moneda == USD)
+    def get_num(row_, col_) -> float:
+        v = get_num_raw(row_, col_)
+        if moneda == "USD" and tc != 0:
+            return v * tc
+        return v
 
     # Base común
     base = {
@@ -134,18 +165,20 @@ for _, row in df.iterrows():
         "Nro. Doc. Emisor": row.get(COL_CUIT_EMISOR),
         "Denominación Emisor": row.get(COL_NOM_EMISOR),
         "Condición Fiscal": "RI" if letra == "A" else "MT",
-        "Tipo Cambio": row.get(COL_TC),
-        "Moneda": row.get(COL_MON),
+        # visibles en grilla/salida
+        "Tipo Cambio": tc,
+        "Moneda": moneda,
     }
 
-    # Exento / No gravado, otros tributos y total, con signo correcto
-    exng_val = s(get_num(row, COL_NETO_NG) + get_num(row, COL_EXENTAS))
+    # Exento / No gravado:
+    # Neto No Gravado + Op. Exentas + Neto Grav. IVA 0% (pedido: pasar como EXENTO en Ex/Ng)
+    exng_val = s(get_num(row, COL_NETO_NG) + get_num(row, COL_EXENTAS) + get_num(row, COL_NETO_0))
     otros_val = s(get_num(row, COL_OTROS))
     total_val = s(get_num(row, COL_TOTAL))
 
     filas_comp = []
 
-    # Alícuotas consideradas: 10,5% / 21% / 27% (numéricas)
+    # Alícuotas: 10,5% / 21% / 27%
     aliquotas = [
         (10.5, COL_NETO_105, COL_IVA_105),
         (21.0, COL_NETO_21, COL_IVA_21),
@@ -156,7 +189,6 @@ for _, row in df.iterrows():
         neto = s(get_num(row, col_neto))
         iva = s(get_num(row, col_iva))
 
-        # Si no hay importe, no generamos fila para esa alícuota
         if neto == 0 and iva == 0:
             continue
 
@@ -168,15 +200,15 @@ for _, row in df.iterrows():
         rec["Otros Conceptos"] = 0.0
         filas_comp.append(rec)
 
-    # Asignar Ex/Ng y Otros en UNA sola fila si hay alícuotas
+    # Ex/Ng y Otros: en una sola fila si hay alícuotas
     if filas_comp:
         if exng_val != 0 or otros_val != 0:
             filas_comp[0]["Ex/Ng"] = exng_val
             filas_comp[0]["Otros Conceptos"] = otros_val
     else:
-        # Caso sin alícuotas:
-        #   - si hay Ex/Ng u Otros: usamos esos valores
-        #   - si no, pero hay Total (típico comprobante C), mandamos Total a Ex/Ng
+        # Sin alícuotas:
+        # - si hay Ex/Ng u Otros: usar esos
+        # - si no, pero hay Total: mandar Total a Ex/Ng
         if exng_val != 0 or otros_val != 0 or total_val != 0:
             rec = base.copy()
             rec["Alicuota"] = 0.0
@@ -187,13 +219,12 @@ for _, row in df.iterrows():
                 rec["Ex/Ng"] = exng_val
                 rec["Otros Conceptos"] = otros_val
             else:
-                # Comprobantes C con solo “Imp. Total”: todo el total a No Gravado/Ex
                 rec["Ex/Ng"] = total_val
                 rec["Otros Conceptos"] = 0.0
 
             filas_comp.append(rec)
 
-    # Calcular total y acumular registros
+    # Total y acumulación
     for rec in filas_comp:
         rec["Total"] = (
             float(rec["Neto"])
@@ -236,7 +267,6 @@ st.subheader("Vista previa de la salida")
 st.dataframe(salida.head(50))
 
 # --- GENERAR EXCEL PARA DESCARGAR ---
-
 buffer = BytesIO()
 with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
     salida.to_excel(writer, sheet_name="Salida", index=False)
@@ -244,17 +274,23 @@ with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
     workbook = writer.book
     worksheet = writer.sheets["Salida"]
 
-    # Formato montos: miles + 2 decimales
     money_format = workbook.add_format({"num_format": "#,##0.00"})
-
     col_idx = {name: i for i, name in enumerate(salida.columns)}
 
-    # Columnas de importes
+    # Importes
     for nombre in ["Neto", "IVA", "Ex/Ng", "Otros Conceptos", "Total"]:
         j = col_idx[nombre]
         worksheet.set_column(j, j, 15, money_format)
 
-    # Formato especial para Alicuota: 2 enteros y 3 decimales (ej. 21,000)
+    # Tipo Cambio / Moneda visibles
+    if "Tipo Cambio" in col_idx:
+        j = col_idx["Tipo Cambio"]
+        worksheet.set_column(j, j, 12, money_format)
+    if "Moneda" in col_idx:
+        j = col_idx["Moneda"]
+        worksheet.set_column(j, j, 10)
+
+    # Alicuota
     aliq_format = workbook.add_format({"num_format": "00.000"})
     j_aliq = col_idx["Alicuota"]
     worksheet.set_column(j_aliq, j_aliq, 8, aliq_format)
@@ -265,10 +301,7 @@ st.download_button(
     "📥 Descargar Excel procesado",
     data=buffer,
     file_name="Recibidos_salida.xlsx",
-    mime=(
-        "application/vnd.openxmlformats-officedocument."
-        "spreadsheetml.sheet"
-    ),
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
 # --- Footer ---
