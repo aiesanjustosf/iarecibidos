@@ -40,6 +40,11 @@ def map_tipo_letra(concepto: str):
     """Devuelve (Tipo, Letra) según el texto 'Tipo' de ARCA."""
     concepto = str(concepto).strip()
 
+    # AJUSTE: caso especial pedido
+    # 81 - Tique Factura A => Tipo T / Letra A
+    if concepto.startswith("81") and "Tique Factura A" in concepto:
+        return "T", "A"
+
     # Tipo: F / ND / NC / R
     if "Nota de Crédito" in concepto:
         tipo = "NC"
@@ -90,7 +95,7 @@ COL_NETO_21 = "Neto Grav. IVA 21%"
 COL_IVA_27 = "IVA 27%"
 COL_NETO_27 = "Neto Grav. IVA 27%"
 
-# NUEVO: si hay monto acá, pasarlo como EXENTO en Ex/Ng
+# Si hay monto acá, pasarlo como EXENTO en Ex/Ng
 COL_NETO_0 = "Neto Grav. IVA 0%"
 
 COL_NETO_NG = "Neto No Gravado"
@@ -132,6 +137,7 @@ for _, row in df.iterrows():
 
     tipo, letra = map_tipo_letra(concepto)
     es_nc = "Nota de Crédito" in concepto
+    es_tique_factura_a_81 = concepto.startswith("81") and "Tique Factura A" in concepto
 
     moneda = str(row.get(COL_MON, "") or "").strip().upper()
     tc = get_num_raw(row, COL_TC)
@@ -171,8 +177,12 @@ for _, row in df.iterrows():
     }
 
     # Exento / No gravado:
-    # Neto No Gravado + Op. Exentas + Neto Grav. IVA 0% (pedido: pasar como EXENTO en Ex/Ng)
-    exng_val = s(get_num(row, COL_NETO_NG) + get_num(row, COL_EXENTAS) + get_num(row, COL_NETO_0))
+    # Neto No Gravado + Op. Exentas + Neto Grav. IVA 0%
+    exng_val = s(
+        get_num(row, COL_NETO_NG)
+        + get_num(row, COL_EXENTAS)
+        + get_num(row, COL_NETO_0)
+    )
     otros_val = s(get_num(row, COL_OTROS))
     total_val = s(get_num(row, COL_TOTAL))
 
@@ -223,6 +233,18 @@ for _, row in df.iterrows():
                 rec["Otros Conceptos"] = 0.0
 
             filas_comp.append(rec)
+
+    # AJUSTE: para 81 - Tique Factura A, si la suma no coincide con el total original,
+    # llevar la diferencia a Ex/Ng para que el comprobante salga con el mismo total de ARCA
+    if es_tique_factura_a_81 and filas_comp:
+        total_calculado = sum(
+            float(r["Neto"]) + float(r["IVA"]) + float(r["Ex/Ng"]) + float(r["Otros Conceptos"])
+            for r in filas_comp
+        )
+        diferencia = round(float(total_val) - float(total_calculado), 2)
+
+        if abs(diferencia) >= 0.01:
+            filas_comp[0]["Ex/Ng"] = float(filas_comp[0]["Ex/Ng"]) + diferencia
 
     # Total y acumulación
     for rec in filas_comp:
