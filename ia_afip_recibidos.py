@@ -7,10 +7,20 @@ import pandas as pd
 from io import BytesIO
 from pathlib import Path
 
-# --- Rutas de assets ---
+
+# ============================================================
+# RUTAS DE ASSETS
+# ============================================================
+
 HERE = Path(__file__).parent
+
 LOGO = HERE / "logo_aie.png"
 FAVICON = HERE / "favicon_aie.ico"
+
+
+# ============================================================
+# CONFIGURACIÓN DE STREAMLIT
+# ============================================================
 
 st.set_page_config(
     page_title="ARCA Recibidos → Formato Holistor",
@@ -18,7 +28,11 @@ st.set_page_config(
     layout="centered",
 )
 
-# --- Encabezado con logo ---
+
+# ============================================================
+# ENCABEZADO
+# ============================================================
+
 if LOGO.exists():
     st.image(str(LOGO), width=180)
 
@@ -30,307 +44,899 @@ st.write(
     "listo para importar en **Holistor**."
 )
 
+
 uploaded = st.file_uploader(
     "Subí el archivo de ARCA (.xlsx)",
     type=["xlsx"],
 )
 
 
-def map_tipo_letra(concepto: str):
-    """Devuelve (Tipo, Letra) según el texto 'Tipo' de ARCA."""
+# ============================================================
+# FUNCIONES DE COMPROBANTES
+# ============================================================
+
+def get_codigo_arca(concepto: str) -> str:
+    """
+    Obtiene el código numérico del comprobante ARCA.
+
+    Ejemplos:
+    '051 - Factura M' -> '51'
+    '52 - Nota de Débito M' -> '52'
+    '063 - Liquidación A' -> '63'
+    """
     concepto = str(concepto).strip()
 
-    # AJUSTE: caso especial pedido
-    # 81 - Tique Factura A => Tipo T / Letra A
-    if concepto.startswith("81") and "Tique Factura A" in concepto:
+    if not concepto:
+        return ""
+
+    codigo = concepto.split("-")[0].strip()
+
+    # Quitar ceros a la izquierda.
+    # Ej: 051 -> 51
+    codigo = codigo.lstrip("0")
+
+    return codigo if codigo else "0"
+
+
+def map_tipo_letra(concepto: str):
+    """
+    Devuelve (Tipo, Letra) según el comprobante de ARCA,
+    adaptado al formato esperado por Holistor.
+    """
+
+    concepto = str(concepto).strip()
+    codigo = get_codigo_arca(concepto)
+
+    # --------------------------------------------------------
+    # NUEVOS COMPROBANTES
+    # --------------------------------------------------------
+
+    # 051 - Factura M
+    if codigo == "51":
+        return "F", "M"
+
+    # 052 - Nota de Débito M
+    # En Holistor todas las Notas de Débito usan Tipo D
+    # independientemente de la letra.
+    if codigo == "52":
+        return "D", "M"
+
+    # 053 - Nota de Crédito M
+    # En Holistor todas las Notas de Crédito usan Tipo C
+    # independientemente de la letra.
+    if codigo == "53":
+        return "C", "M"
+
+    # 063 - Liquidación A
+    # En Holistor se vincula con comprobante LB
+    if codigo == "63":
+        return "LB", "A"
+
+    # --------------------------------------------------------
+    # CASO ESPECIAL EXISTENTE
+    # --------------------------------------------------------
+
+    # 81 - Tique Factura A
+    if codigo == "81" and "Tique Factura A" in concepto:
         return "T", "A"
 
-    # Tipo: F / ND / NC / R
+    # --------------------------------------------------------
+    # TIPOS GENERALES HOLISTOR
+    # --------------------------------------------------------
+    #
+    # IMPORTANTE:
+    # La letra NO cambia el Tipo de comprobante.
+    #
+    # Nota de Crédito = C
+    # Nota de Débito = D
+    # Factura = F
+    # Recibo = R
+    # --------------------------------------------------------
+
     if "Nota de Crédito" in concepto:
-        tipo = "NC"
+        tipo = "C"
+
     elif "Nota de Débito" in concepto:
-        tipo = "ND"
+        tipo = "D"
+
     elif "Recibo" in concepto:
         tipo = "R"
+
     elif "Factura" in concepto:
         tipo = "F"
+
     else:
         tipo = ""
 
-    # Letra:
-    # - en general, última letra (A/B/C)
-    # - caso especial: '8 - Nota de Crédito C' => letra B
-    if concepto.startswith("8 "):
+    # --------------------------------------------------------
+    # LETRA
+    # --------------------------------------------------------
+
+    # Caso especial existente:
+    # 8 - Nota de Crédito C => Holistor letra B
+    if codigo == "8":
         letra = "B"
+
     else:
+        # En general la letra es el último carácter:
+        # A / B / C / M
         letra = concepto[-1] if concepto else ""
 
     return tipo, letra
 
 
+# ============================================================
+# DETENER SI TODAVÍA NO SE SUBIÓ ARCHIVO
+# ============================================================
+
 if uploaded is None:
     st.stop()
 
-# --- LECTURA DEL EXCEL DE ARCA ---
-# header=1 porque la fila 2 del archivo tiene los encabezados reales
-df = pd.read_excel(uploaded, sheet_name=0, header=1)
 
-# Nombres de columnas según ARCA
+# ============================================================
+# LECTURA DEL EXCEL DE ARCA
+# ============================================================
+
+# header=1 porque la fila 2 del archivo tiene
+# los encabezados reales.
+
+df = pd.read_excel(
+    uploaded,
+    sheet_name=0,
+    header=1,
+)
+
+
+# ============================================================
+# NOMBRES DE COLUMNAS SEGÚN ARCA
+# ============================================================
+
 COL_FECHA = "Fecha"
 COL_TIPO_AFIP = "Tipo"
+
 COL_PV = "Punto de Venta"
 COL_NRO_DESDE = "Número Desde"
 COL_NRO_HASTA = "Número Hasta"
+
 COL_CUIT_EMISOR = "Nro. Doc. Emisor"
 COL_NOM_EMISOR = "Denominación Emisor"
 
-# USD
+
+# ------------------------------------------------------------
+# MONEDA / TIPO DE CAMBIO
+# ------------------------------------------------------------
+
 COL_TC = "Tipo Cambio"
 COL_MON = "Moneda"
 
+
+# ------------------------------------------------------------
+# IVA
+# ------------------------------------------------------------
+
 COL_IVA_105 = "IVA 10,5%"
 COL_NETO_105 = "Neto Grav. IVA 10,5%"
+
 COL_IVA_21 = "IVA 21%"
 COL_NETO_21 = "Neto Grav. IVA 21%"
+
 COL_IVA_27 = "IVA 27%"
 COL_NETO_27 = "Neto Grav. IVA 27%"
 
+
 # Si hay monto acá, pasarlo como EXENTO en Ex/Ng
+
 COL_NETO_0 = "Neto Grav. IVA 0%"
+
+
+# ------------------------------------------------------------
+# OTROS IMPORTES
+# ------------------------------------------------------------
 
 COL_NETO_NG = "Neto No Gravado"
 COL_EXENTAS = "Op. Exentas"
 COL_OTROS = "Otros Tributos"
 COL_TOTAL = "Imp. Total"
 
-# Si no existieran por variación de layout, fallback mínimo para no romper
+
+# ============================================================
+# FALLBACKS POR POSIBLES CAMBIOS DE NOMBRE EN ARCA
+# ============================================================
+
 if COL_TC not in df.columns and "Tipo de Cambio" in df.columns:
     COL_TC = "Tipo de Cambio"
+
 if COL_MON not in df.columns and "Moneda" in df.columns:
     COL_MON = "Moneda"
+
 if COL_NETO_0 not in df.columns and "Neto Grav. IVA 0 %" in df.columns:
     COL_NETO_0 = "Neto Grav. IVA 0 %"
 
-# Asegurar columnas presentes
-for c in [COL_TC, COL_MON, COL_NETO_0]:
+
+# ============================================================
+# ASEGURAR COLUMNAS
+# ============================================================
+
+for c in [
+    COL_TC,
+    COL_MON,
+    COL_NETO_0,
+]:
     if c not in df.columns:
-        df[c] = 0.0 if c != COL_MON else ""
 
-registros = []
+        if c == COL_MON:
+            df[c] = ""
 
+        else:
+            df[c] = 0.0
+
+
+# ============================================================
+# FUNCIONES AUXILIARES
+# ============================================================
 
 def get_num_raw(row, col) -> float:
-    """Devuelve número limpio (NaN -> 0)."""
+    """
+    Devuelve un número limpio.
+    NaN / vacío / error -> 0
+    """
+
     v = row.get(col, 0)
+
     if pd.isna(v):
         return 0.0
+
     try:
         return float(v)
+
     except Exception:
         return 0.0
 
 
+# ============================================================
+# PROCESAMIENTO
+# ============================================================
+
+registros = []
+
+
 for _, row in df.iterrows():
-    concepto = str(row.get(COL_TIPO_AFIP, "")).strip()
+
+    concepto = str(
+        row.get(COL_TIPO_AFIP, "")
+    ).strip()
+
     if not concepto:
         continue
 
+    codigo_arca = get_codigo_arca(concepto)
+
     tipo, letra = map_tipo_letra(concepto)
-    es_nc = "Nota de Crédito" in concepto
-    es_tique_factura_a_81 = concepto.startswith("81") and "Tique Factura A" in concepto
 
-    moneda = str(row.get(COL_MON, "") or "").strip().upper()
-    tc = get_num_raw(row, COL_TC)
 
-    # Signo correcto:
-    # - NC: negativo
-    # - resto: positivo
+    # ========================================================
+    # NOTAS DE CRÉDITO
+    # ========================================================
+    #
+    # Todas las Notas de Crédito deben RESTAR.
+    #
+    # Incluye:
+    # - NC A
+    # - NC B
+    # - NC C
+    # - 053 Nota de Crédito M
+    #
+    # ========================================================
+
+    es_nc = (
+        codigo_arca == "53"
+        or "Nota de Crédito" in concepto
+    )
+
+
+    # ========================================================
+    # TIQUE FACTURA A - CÓDIGO 81
+    # ========================================================
+
+    es_tique_factura_a_81 = (
+        codigo_arca == "81"
+        and "Tique Factura A" in concepto
+    )
+
+
+    # ========================================================
+    # MONEDA
+    # ========================================================
+
+    moneda = str(
+        row.get(COL_MON, "") or ""
+    ).strip().upper()
+
+    tc = get_num_raw(
+        row,
+        COL_TC,
+    )
+
+
+    # ========================================================
+    # SIGNO
+    # ========================================================
+
     def s(valor: float) -> float:
+        """
+        Nota de Crédito -> negativo.
+        Resto -> positivo.
+        """
+
         if valor == 0:
             return 0.0
-        return -abs(valor) if es_nc else abs(valor)
 
-    # Monto con conversión USD -> ARS (si Moneda == USD)
+        if es_nc:
+            return -abs(valor)
+
+        return abs(valor)
+
+
+    # ========================================================
+    # CONVERSIÓN MONEDA
+    # ========================================================
+
     def get_num(row_, col_) -> float:
-        v = get_num_raw(row_, col_)
+        """
+        Obtiene el importe y, si la moneda es USD,
+        lo convierte a pesos utilizando Tipo Cambio.
+        """
+
+        v = get_num_raw(
+            row_,
+            col_,
+        )
+
         if moneda == "USD" and tc != 0:
             return v * tc
+
         return v
 
-    # Base común
+
+    # ========================================================
+    # BASE COMÚN DEL COMPROBANTE
+    # ========================================================
+
     base = {
-        "Fecha Emisión": row.get(COL_FECHA),
-        "Fecha Recepción": row.get(COL_FECHA),
-        "Concepto": concepto,
-        "Tipo": tipo,
-        "Letra": letra,
-        "Punto de Venta": row.get(COL_PV),
-        "Número Desde": row.get(COL_NRO_DESDE),
-        "Número Hasta": row.get(COL_NRO_HASTA),
-        "Tipo Doc. Emisor": 80,
-        "Nro. Doc. Emisor": row.get(COL_CUIT_EMISOR),
-        "Denominación Emisor": row.get(COL_NOM_EMISOR),
-        "Condición Fiscal": "RI" if letra == "A" else "MT",
-        # visibles en grilla/salida
-        "Tipo Cambio": tc,
-        "Moneda": moneda,
+
+        "Fecha Emisión":
+            row.get(COL_FECHA),
+
+        "Fecha Recepción":
+            row.get(COL_FECHA),
+
+        "Concepto":
+            concepto,
+
+        "Tipo":
+            tipo,
+
+        "Letra":
+            letra,
+
+        "Punto de Venta":
+            row.get(COL_PV),
+
+        "Número Desde":
+            row.get(COL_NRO_DESDE),
+
+        "Número Hasta":
+            row.get(COL_NRO_HASTA),
+
+        "Tipo Doc. Emisor":
+            80,
+
+        "Nro. Doc. Emisor":
+            row.get(COL_CUIT_EMISOR),
+
+        "Denominación Emisor":
+            row.get(COL_NOM_EMISOR),
+
+        "Condición Fiscal":
+            "RI" if letra == "A" else "MT",
+
+        # Visibles en grilla / salida
+
+        "Tipo Cambio":
+            tc,
+
+        "Moneda":
+            moneda,
     }
 
-    # Exento / No gravado:
-    # Neto No Gravado + Op. Exentas + Neto Grav. IVA 0%
+
+    # ========================================================
+    # EXENTO / NO GRAVADO
+    # ========================================================
+    #
+    # Neto No Gravado
+    # + Operaciones Exentas
+    # + Neto Gravado IVA 0%
+    #
+    # ========================================================
+
     exng_val = s(
-        get_num(row, COL_NETO_NG)
-        + get_num(row, COL_EXENTAS)
-        + get_num(row, COL_NETO_0)
+
+        get_num(
+            row,
+            COL_NETO_NG,
+        )
+
+        +
+
+        get_num(
+            row,
+            COL_EXENTAS,
+        )
+
+        +
+
+        get_num(
+            row,
+            COL_NETO_0,
+        )
     )
-    otros_val = s(get_num(row, COL_OTROS))
-    total_val = s(get_num(row, COL_TOTAL))
+
+
+    # ========================================================
+    # OTROS TRIBUTOS
+    # ========================================================
+
+    otros_val = s(
+        get_num(
+            row,
+            COL_OTROS,
+        )
+    )
+
+
+    # ========================================================
+    # TOTAL ORIGINAL ARCA
+    # ========================================================
+
+    total_val = s(
+        get_num(
+            row,
+            COL_TOTAL,
+        )
+    )
+
+
+    # ========================================================
+    # FILAS DEL COMPROBANTE
+    # ========================================================
 
     filas_comp = []
 
-    # Alícuotas: 10,5% / 21% / 27%
+
+    # ========================================================
+    # ALÍCUOTAS
+    # ========================================================
+
     aliquotas = [
-        (10.5, COL_NETO_105, COL_IVA_105),
-        (21.0, COL_NETO_21, COL_IVA_21),
-        (27.0, COL_NETO_27, COL_IVA_27),
+
+        (
+            10.5,
+            COL_NETO_105,
+            COL_IVA_105,
+        ),
+
+        (
+            21.0,
+            COL_NETO_21,
+            COL_IVA_21,
+        ),
+
+        (
+            27.0,
+            COL_NETO_27,
+            COL_IVA_27,
+        ),
     ]
 
+
     for aliq_val, col_neto, col_iva in aliquotas:
-        neto = s(get_num(row, col_neto))
-        iva = s(get_num(row, col_iva))
+
+        neto = s(
+            get_num(
+                row,
+                col_neto,
+            )
+        )
+
+        iva = s(
+            get_num(
+                row,
+                col_iva,
+            )
+        )
+
+
+        # Si no hay ni neto ni IVA para esa alícuota,
+        # no generar fila.
 
         if neto == 0 and iva == 0:
             continue
 
+
         rec = base.copy()
+
         rec["Alicuota"] = aliq_val
+
         rec["Neto"] = neto
+
         rec["IVA"] = iva
+
         rec["Ex/Ng"] = 0.0
+
         rec["Otros Conceptos"] = 0.0
+
+
         filas_comp.append(rec)
 
-    # Ex/Ng y Otros: en una sola fila si hay alícuotas
+
+    # ========================================================
+    # EXENTO / NO GRAVADO / OTROS
+    # ========================================================
+
     if filas_comp:
+
+        # Si existen alícuotas,
+        # Ex/Ng y Otros se agregan a la primera fila.
+
         if exng_val != 0 or otros_val != 0:
+
             filas_comp[0]["Ex/Ng"] = exng_val
+
             filas_comp[0]["Otros Conceptos"] = otros_val
+
+
     else:
-        # Sin alícuotas:
-        # - si hay Ex/Ng u Otros: usar esos
-        # - si no, pero hay Total: mandar Total a Ex/Ng
-        if exng_val != 0 or otros_val != 0 or total_val != 0:
+
+        # ====================================================
+        # SIN ALÍCUOTAS
+        # ====================================================
+        #
+        # Si hay Ex/Ng u Otros -> utilizar esos importes.
+        #
+        # Si no hay nada discriminado pero existe Total,
+        # mandar el Total completo a Ex/Ng.
+        #
+        # ====================================================
+
+        if (
+            exng_val != 0
+            or otros_val != 0
+            or total_val != 0
+        ):
+
             rec = base.copy()
+
             rec["Alicuota"] = 0.0
+
             rec["Neto"] = 0.0
+
             rec["IVA"] = 0.0
 
+
             if exng_val != 0 or otros_val != 0:
+
                 rec["Ex/Ng"] = exng_val
+
                 rec["Otros Conceptos"] = otros_val
+
+
             else:
+
                 rec["Ex/Ng"] = total_val
+
                 rec["Otros Conceptos"] = 0.0
+
 
             filas_comp.append(rec)
 
-    # AJUSTE: para 81 - Tique Factura A, si la suma no coincide con el total original,
-    # llevar la diferencia a Ex/Ng para que el comprobante salga con el mismo total de ARCA
+
+    # ========================================================
+    # AJUSTE ESPECIAL
+    # 81 - TIQUE FACTURA A
+    # ========================================================
+    #
+    # Si la suma discriminada no coincide con el total
+    # original de ARCA, enviar la diferencia a Ex/Ng.
+    #
+    # ========================================================
+
     if es_tique_factura_a_81 and filas_comp:
+
         total_calculado = sum(
-            float(r["Neto"]) + float(r["IVA"]) + float(r["Ex/Ng"]) + float(r["Otros Conceptos"])
+
+            float(r["Neto"])
+            + float(r["IVA"])
+            + float(r["Ex/Ng"])
+            + float(r["Otros Conceptos"])
+
             for r in filas_comp
         )
-        diferencia = round(float(total_val) - float(total_calculado), 2)
+
+
+        diferencia = round(
+            float(total_val)
+            - float(total_calculado),
+            2,
+        )
+
 
         if abs(diferencia) >= 0.01:
-            filas_comp[0]["Ex/Ng"] = float(filas_comp[0]["Ex/Ng"]) + diferencia
 
-    # Total y acumulación
+            filas_comp[0]["Ex/Ng"] = (
+                float(
+                    filas_comp[0]["Ex/Ng"]
+                )
+                + diferencia
+            )
+
+
+    # ========================================================
+    # TOTAL POR FILA
+    # ========================================================
+
     for rec in filas_comp:
+
         rec["Total"] = (
+
             float(rec["Neto"])
             + float(rec["IVA"])
             + float(rec["Ex/Ng"])
             + float(rec["Otros Conceptos"])
+
         )
+
         registros.append(rec)
 
+
+# ============================================================
+# VALIDACIÓN
+# ============================================================
+
 if not registros:
-    st.error("No se encontraron comprobantes con importes.")
+
+    st.error(
+        "No se encontraron comprobantes con importes."
+    )
+
     st.stop()
 
+
+# ============================================================
+# COLUMNAS DE SALIDA
+# ============================================================
+
 cols_salida = [
+
     "Fecha Emisión",
+
     "Fecha Recepción",
+
     "Concepto",
+
     "Tipo",
+
     "Letra",
+
     "Punto de Venta",
+
     "Número Desde",
+
     "Número Hasta",
+
     "Tipo Doc. Emisor",
+
     "Nro. Doc. Emisor",
+
     "Denominación Emisor",
+
     "Condición Fiscal",
+
     "Tipo Cambio",
+
     "Moneda",
+
     "Alicuota",
+
     "Neto",
+
     "IVA",
+
     "Ex/Ng",
+
     "Otros Conceptos",
+
     "Total",
 ]
 
-salida = pd.DataFrame(registros)[cols_salida]
 
-st.subheader("Vista previa de la salida")
-st.dataframe(salida.head(50))
+salida = pd.DataFrame(
+    registros
+)[cols_salida]
 
-# --- GENERAR EXCEL PARA DESCARGAR ---
+
+# ============================================================
+# VISTA PREVIA
+# ============================================================
+
+st.subheader(
+    "Vista previa de la salida"
+)
+
+st.dataframe(
+    salida.head(50),
+    use_container_width=True,
+)
+
+
+# ============================================================
+# GENERAR EXCEL PARA DESCARGAR
+# ============================================================
+
 buffer = BytesIO()
-with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-    salida.to_excel(writer, sheet_name="Salida", index=False)
+
+
+with pd.ExcelWriter(
+    buffer,
+    engine="xlsxwriter",
+) as writer:
+
+    salida.to_excel(
+        writer,
+        sheet_name="Salida",
+        index=False,
+    )
+
 
     workbook = writer.book
+
     worksheet = writer.sheets["Salida"]
 
-    money_format = workbook.add_format({"num_format": "#,##0.00"})
-    col_idx = {name: i for i, name in enumerate(salida.columns)}
 
-    # Importes
-    for nombre in ["Neto", "IVA", "Ex/Ng", "Otros Conceptos", "Total"]:
+    # ========================================================
+    # FORMATOS
+    # ========================================================
+
+    money_format = workbook.add_format(
+        {
+            "num_format": "#,##0.00"
+        }
+    )
+
+
+    col_idx = {
+        name: i
+        for i, name in enumerate(
+            salida.columns
+        )
+    }
+
+
+    # ========================================================
+    # IMPORTES
+    # ========================================================
+
+    for nombre in [
+
+        "Neto",
+
+        "IVA",
+
+        "Ex/Ng",
+
+        "Otros Conceptos",
+
+        "Total",
+
+    ]:
+
         j = col_idx[nombre]
-        worksheet.set_column(j, j, 15, money_format)
 
-    # Tipo Cambio / Moneda visibles
+        worksheet.set_column(
+            j,
+            j,
+            15,
+            money_format,
+        )
+
+
+    # ========================================================
+    # TIPO DE CAMBIO
+    # ========================================================
+
     if "Tipo Cambio" in col_idx:
-        j = col_idx["Tipo Cambio"]
-        worksheet.set_column(j, j, 12, money_format)
-    if "Moneda" in col_idx:
-        j = col_idx["Moneda"]
-        worksheet.set_column(j, j, 10)
 
-    # Alicuota
-    aliq_format = workbook.add_format({"num_format": "00.000"})
-    j_aliq = col_idx["Alicuota"]
-    worksheet.set_column(j_aliq, j_aliq, 8, aliq_format)
+        j = col_idx[
+            "Tipo Cambio"
+        ]
+
+        worksheet.set_column(
+            j,
+            j,
+            12,
+            money_format,
+        )
+
+
+    # ========================================================
+    # MONEDA
+    # ========================================================
+
+    if "Moneda" in col_idx:
+
+        j = col_idx[
+            "Moneda"
+        ]
+
+        worksheet.set_column(
+            j,
+            j,
+            10,
+        )
+
+
+    # ========================================================
+    # ALÍCUOTA
+    # ========================================================
+
+    aliq_format = workbook.add_format(
+        {
+            "num_format": "00.000"
+        }
+    )
+
+
+    j_aliq = col_idx[
+        "Alicuota"
+    ]
+
+    worksheet.set_column(
+        j_aliq,
+        j_aliq,
+        8,
+        aliq_format,
+    )
+
+
+# Volver al comienzo del archivo generado
 
 buffer.seek(0)
 
+
+# ============================================================
+# DESCARGA
+# ============================================================
+
 st.download_button(
+
     "📥 Descargar Excel procesado",
+
     data=buffer,
+
     file_name="Recibidos_salida.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+
+    mime=(
+        "application/vnd.openxmlformats-officedocument."
+        "spreadsheetml.sheet"
+    ),
 )
 
-# --- Footer ---
+
+# ============================================================
+# FOOTER
+# ============================================================
+
 st.markdown(
-    "<br><hr style='opacity:0.3'><div style='text-align:center; "
-    "font-size:12px; color:#6b7280;'>"
-    "© AIE – Herramienta para uso interno | Developer Alfonso Alderete"
-    "</div>",
-    unsafe_allow_html=True,
+    "© AIE – Herramienta para uso interno | "
+    "Developer Alfonso Alderete"
 )
