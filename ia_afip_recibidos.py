@@ -200,6 +200,7 @@ COL_NRO_HASTA = "Número Hasta"
 
 COL_CUIT_EMISOR = "Nro. Doc. Emisor"
 COL_NOM_EMISOR = "Denominación Emisor"
+COL_COD_AUT = "Cód. Autorización"
 
 
 # ------------------------------------------------------------
@@ -252,6 +253,20 @@ if COL_MON not in df.columns and "Moneda" in df.columns:
 if COL_NETO_0 not in df.columns and "Neto Grav. IVA 0 %" in df.columns:
     COL_NETO_0 = "Neto Grav. IVA 0 %"
 
+# Posibles variantes del encabezado de autorización en ARCA
+if COL_COD_AUT not in df.columns:
+    for alternativa in [
+        "Cod. Autorización",
+        "Código Autorización",
+        "Código de Autorización",
+        "Cod. Autorizacion",
+        "Código Autorizacion",
+        "Código de Autorizacion",
+    ]:
+        if alternativa in df.columns:
+            COL_COD_AUT = alternativa
+            break
+
 
 # ============================================================
 # ASEGURAR COLUMNAS
@@ -261,10 +276,11 @@ for c in [
     COL_TC,
     COL_MON,
     COL_NETO_0,
+    COL_COD_AUT,
 ]:
     if c not in df.columns:
 
-        if c == COL_MON:
+        if c in [COL_MON, COL_COD_AUT]:
             df[c] = ""
 
         else:
@@ -335,12 +351,22 @@ for _, row in df.iterrows():
 
 
     # ========================================================
-    # TIQUE FACTURA A - CÓDIGO 81
+    # TIQUE FACTURA A / B - CÓDIGOS 81 Y 82
     # ========================================================
 
     es_tique_factura_a_81 = (
         codigo_arca == "81"
         and "Tique Factura A" in concepto
+    )
+
+    es_tique_factura_b_82 = (
+        codigo_arca == "82"
+        and "Tique Factura B" in concepto
+    )
+
+    es_tique_factura_ajustable = (
+        es_tique_factura_a_81
+        or es_tique_factura_b_82
     )
 
 
@@ -428,6 +454,9 @@ for _, row in df.iterrows():
         "Número Hasta":
             row.get(COL_NRO_HASTA),
 
+        "Cód. Autorización":
+            row.get(COL_COD_AUT),
+
         "Tipo Doc. Emisor":
             80,
 
@@ -447,6 +476,10 @@ for _, row in df.iterrows():
 
         "Moneda":
             moneda,
+
+        # Se completa solo si el comprobante fue ajustado
+        "Control IA":
+            "",
     }
 
 
@@ -644,14 +677,22 @@ for _, row in df.iterrows():
     # ========================================================
     # AJUSTE ESPECIAL
     # 81 - TIQUE FACTURA A
+    # 82 - TIQUE FACTURA B
     # ========================================================
     #
     # Si la suma discriminada no coincide con el total
     # original de ARCA, enviar la diferencia a Ex/Ng.
     #
+    # IMPORTANTE:
+    # Este ajuste automático se aplica SOLAMENTE a los
+    # códigos 81 y 82. El resto de los comprobantes mantiene
+    # su tratamiento habitual sin correcciones automáticas.
+    #
+    # Cuando se aplica una corrección, se marca el comprobante
+    # con la leyenda "AJUSTADO POR IA - CORROBORAR".
     # ========================================================
 
-    if es_tique_factura_a_81 and filas_comp:
+    if es_tique_factura_ajustable and filas_comp:
 
         total_calculado = sum(
 
@@ -663,22 +704,23 @@ for _, row in df.iterrows():
             for r in filas_comp
         )
 
-
         diferencia = round(
             float(total_val)
             - float(total_calculado),
             2,
         )
 
-
         if abs(diferencia) >= 0.01:
 
             filas_comp[0]["Ex/Ng"] = (
-                float(
-                    filas_comp[0]["Ex/Ng"]
-                )
+                float(filas_comp[0]["Ex/Ng"])
                 + diferencia
             )
+
+            for r in filas_comp:
+                r["Control IA"] = (
+                    "AJUSTADO POR IA - CORROBORAR"
+                )
 
 
     # ========================================================
@@ -734,6 +776,8 @@ cols_salida = [
 
     "Número Hasta",
 
+    "Cód. Autorización",
+
     "Tipo Doc. Emisor",
 
     "Nro. Doc. Emisor",
@@ -757,6 +801,8 @@ cols_salida = [
     "Otros Conceptos",
 
     "Total",
+
+    "Control IA",
 ]
 
 
@@ -883,6 +929,19 @@ with pd.ExcelWriter(
             j,
             10,
         )
+
+
+    # ========================================================
+    # CÓDIGO DE AUTORIZACIÓN / CONTROL IA
+    # ========================================================
+
+    if "Cód. Autorización" in col_idx:
+        j = col_idx["Cód. Autorización"]
+        worksheet.set_column(j, j, 20)
+
+    if "Control IA" in col_idx:
+        j = col_idx["Control IA"]
+        worksheet.set_column(j, j, 32)
 
 
     # ========================================================
