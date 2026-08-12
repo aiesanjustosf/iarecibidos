@@ -353,6 +353,7 @@ for _, row in df.iterrows():
     # ========================================================
     # COMPROBANTES CON CONTROL ESPECIAL DE TOTAL
     # 6  - FACTURA B
+    # 7  - NOTA DE DÉBITO B
     # 81 - TIQUE FACTURA A
     # 82 - TIQUE FACTURA B
     # ========================================================
@@ -360,6 +361,12 @@ for _, row in df.iterrows():
     es_factura_b_6 = (
         codigo_arca == "6"
         and "Factura B" in concepto
+    )
+
+    es_nota_debito_b_7 = (
+        codigo_arca == "7"
+        and "Nota de Débito" in concepto
+        and concepto.endswith("B")
     )
 
     es_tique_factura_a_81 = (
@@ -374,6 +381,7 @@ for _, row in df.iterrows():
 
     es_comprobante_ajustable = (
         es_factura_b_6
+        or es_nota_debito_b_7
         or es_tique_factura_a_81
         or es_tique_factura_b_82
     )
@@ -686,6 +694,7 @@ for _, row in df.iterrows():
     # ========================================================
     # AJUSTE ESPECIAL DE TOTAL
     # 6  - FACTURA B
+    # 7  - NOTA DE DÉBITO B
     # 81 - TIQUE FACTURA A
     # 82 - TIQUE FACTURA B
     # ========================================================
@@ -695,7 +704,7 @@ for _, row in df.iterrows():
     #
     # IMPORTANTE:
     # Este ajuste automático se aplica SOLAMENTE a los
-    # códigos 6, 81 y 82. El resto de los comprobantes mantiene
+    # códigos 6, 7, 81 y 82. El resto de los comprobantes mantiene
     # su tratamiento habitual sin correcciones automáticas.
     #
     # Cuando se aplica una corrección, se marca el comprobante
